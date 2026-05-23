@@ -137,7 +137,7 @@ admittance_controller:
           - 0.0 #-0.0838 # x
           - 0.0 #-0.0076 # y
           - 0.0 #0.1212 # z
-        force: -0.37 #3.63 # mass * 9.81
+        force: 0.0 #3.63 # mass * 9.81
     admittance:
       selected_axes:
         - false # x
@@ -149,26 +149,26 @@ admittance_controller:
       # Having ".0" at the end is MUST, otherwise there is a loading error
       # F = M*a + D*v + S*(x - x_d)
       mass:
+        - 50.0
+        - 50.0
+        - 50.0
         - 1.0
-        - 5.0
-        - 5.0
-        - 0.10
-        - 0.10
-        - 0.10
+        - 1.0
+        - 1.0
       damping_ratio: # damping can be used instead: zeta = D / (2 * sqrt( M * S ))
-        - 5.0 # x
-        - 5.0 # y
-        - 5.0 # z
-        - 5.0 # rx
-        - 5.0 # ry
-        - 5.0 # rz
+        - 1.0 # x
+        - 1.0 # y
+        - 1.0 # z
+        - 1.0 # rx
+        - 1.0 # ry
+        - 1.0 # rz
       stiffness:
-        - 800.0
-        - 800.0
-        - 800.0
-        - 800.0
-        - 800.0
-        - 800.0
-      joint_damping: 200.0 # Damping applied in joint space to help stabilize the system
+        - 10.0
+        - 10.0
+        - 10.0
+        - 10.0
+        - 10.0
+        - 10.0
+      joint_damping: 5.0 # Damping applied in joint space to help stabilize the system
     # general settings
     enable_parameter_update_without_reactivation: true
