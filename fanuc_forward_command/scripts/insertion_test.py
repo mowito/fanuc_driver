@@ -44,6 +44,7 @@ from controller_manager_msgs.srv import SwitchController, ListControllers
 
 import math
 import time
+import numpy as np
 
 
 # =============================================================================
@@ -54,7 +55,7 @@ import time
 PUSH_SPEED        = 0.1   # m/s along -fanuc_flange Z (3 mm/s)
 
 # --- Force thresholds ---
-FORCE_THRESHOLD_N = 55.0    # Fz (N) → insertion complete
+FORCE_THRESHOLD_N = 50.0    # Fz (N) → insertion complete
 JAM_FORCE_N       = 100.0    # lateral force (N) → abort
 
 # --- Depth safety ---
@@ -155,6 +156,9 @@ class PegInsertionNode(Node):
             "tx": EMAFilter(FILTER_ALPHA),
             "ty": EMAFilter(FILTER_ALPHA),
         }
+        
+        self._x_dot = 0.0
+        self._y_dot = 0.0
 
     # -------------------------------------------------------------------------
     # Wrench helpers
@@ -242,9 +246,24 @@ class PegInsertionNode(Node):
         if COMPLIANCE_GAIN > 0.0:
             tx = self._deadband(self._f["tx"].value, 0.1)
             ty = self._deadband(self._f["ty"].value, 0.1)
-            msg.twist.angular.x =  COMPLIANCE_GAIN * tx * ramp
-            msg.twist.angular.y =  COMPLIANCE_GAIN * ty * ramp
+            
+            K = 1
+            M = 0.3
+            B = 5
 
+            # admittance controller:
+            # x_dot_dot = (tx - B * x_dot) / M
+            acc_x = (tx - B * self._x_dot) / M
+            acc_y = (ty - B * self._y_dot) / M
+
+            self._x_dot += acc_x * (1 / LOOP_HZ)
+            self._y_dot += acc_y * (1 / LOOP_HZ)
+
+            self._x_dot = np.clip(self._x_dot, -0.2, 0.2)
+            self._y_dot = np.clip(self._y_dot, -0.2, 0.2)
+
+            msg.twist.angular.x =  self._x_dot #(COMPLIANCE_GAIN * tx * ramp)
+            msg.twist.angular.y =  self._y_dot #(COMPLIANCE_GAIN * ty * ramp)
         return msg
 
     def _stop_servo(self):
@@ -315,7 +334,7 @@ class PegInsertionNode(Node):
     # Insertion
     # -------------------------------------------------------------------------
 
-    def insert(self) -> str:
+    def insert(self, sign=1) -> str:
         self.get_logger().info("\n" + "=" * 56)
         self.get_logger().info(
             "INSERTION — DIY compliance via filtered wrench\n"
@@ -377,7 +396,7 @@ class PegInsertionNode(Node):
                         f"  →  wx={wx:+6.4f}  wy={wy:+6.4f} rad/s"
                     )
 
-                if fz >= FORCE_THRESHOLD_N:
+                if fz >= FORCE_THRESHOLD_N and sign == 1:
                     self.get_logger().info(
                         f"  ✓ Inserted — Fz={fz:.2f} N >= {FORCE_THRESHOLD_N:.1f} N"
                     )
@@ -391,7 +410,7 @@ class PegInsertionNode(Node):
                     outcome = "jam"
                     break
 
-                self._twist_pub.publish(self._compliance_twist(PUSH_SPEED, ramp))
+                self._twist_pub.publish(self._compliance_twist(PUSH_SPEED * sign, ramp))
                 depth += step_m
                 tick  += 1
                 time.sleep(loop_period)
@@ -477,7 +496,7 @@ class PegInsertionNode(Node):
         time.sleep(0.5)
 
         try:
-            outcome = self.insert()
+            outcome = self.insert(sign=1)
         except RuntimeError as e:
             self._stop_servo()
             self.get_logger().error(f"Insertion error: {e}")
@@ -486,7 +505,8 @@ class PegInsertionNode(Node):
         self.get_logger().info(f"\nOutcome: {outcome.upper()}")
         self._log_ft()
 
-        self.retract()
+        # self.retract()
+        self.insert(sign=-1)
         self.get_logger().info("Done.")
 
 
