@@ -51,7 +51,7 @@ import time
 # =============================================================================
 
 # --- Push ---
-PUSH_SPEED        = 0.1   # m/s along -fanuc_flange Z (3 mm/s)
+PUSH_SPEED        = 0.4  # m/s along -fanuc_flange Z (3 mm/s)
 
 # --- Force thresholds ---
 FORCE_THRESHOLD_N = 55.0    # Fz (N) → insertion complete
@@ -138,7 +138,7 @@ class PegInsertionNode(Node):
         )
 
         self._twist_pub = self.create_publisher(
-            TwistStamped, "/servo_node/delta_twist_cmds", 10
+            TwistStamped, "/servo_node/delta_twist_cmds_raw", 10
         )
         self._switch_ctrl = self.create_client(
             SwitchController, "/controller_manager/switch_controller"
