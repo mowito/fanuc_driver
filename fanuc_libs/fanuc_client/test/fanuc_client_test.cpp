@@ -5,14 +5,22 @@
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <mutex>
 #include <thread>
+#include <vector>
 
 #include "fanuc_client/fanuc_client.hpp"
 
 class MockStreamMotionConnection : public stream_motion::StreamMotionInterface
 {
 public:
-  explicit MockStreamMotionConnection(std::atomic<bool>& stream_connected) : stream_connected_{ stream_connected }
+  // status_packet_delay_ms paces getStatusPacket() to emulate the real-time cadence of a real
+  // network-backed connection. Defaults to 0 (free-spinning, as before) so existing tests that
+  // don't care about real-time pacing are unaffected; tests that need the realtime thread's
+  // virtual clock to track wall-clock time (e.g. to reproduce queue-starvation timing) pass a
+  // non-zero value matching the control period.
+  explicit MockStreamMotionConnection(std::atomic<bool>& stream_connected, int status_packet_delay_ms = 0)
+    : stream_connected_{ stream_connected }, status_packet_delay_ms_{ status_packet_delay_ms }
   {
     status_.status = 15;
     status_.joint_angle = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
@@ -40,6 +48,16 @@ public:
     {
       status_.joint_angle[i] = static_cast<float>(command_pos[i]);
     }
+    std::lock_guard<std::mutex> lock(history_mutex_);
+    command_history_.push_back(command_pos);
+  }
+
+  // Returns every command_pos ever passed to sendCommand, in order. Thread-safe: sendCommand is
+  // called from the FanucClient realtime thread while this is typically read from the test thread.
+  std::vector<std::array<double, stream_motion::kMaxAxisNumber>> commandHistory() const
+  {
+    std::lock_guard<std::mutex> lock(history_mutex_);
+    return command_history_;
   }
 
   bool getStatusPacket(stream_motion::RobotStatusPacket& status) override
@@ -47,6 +65,10 @@ public:
     if (!stream_connected_)
     {
       return false;
+    }
+    if (status_packet_delay_ms_ > 0)
+    {
+      std::this_thread::sleep_for(std::chrono::milliseconds(status_packet_delay_ms_));
     }
     status = status_;
     return true;
@@ -89,6 +111,9 @@ public:
 private:
   mutable stream_motion::RobotStatusPacket status_;
   std::atomic<bool>& stream_connected_;
+  int status_packet_delay_ms_;
+  mutable std::mutex history_mutex_;
+  mutable std::vector<std::array<double, stream_motion::kMaxAxisNumber>> command_history_;
 };
 
 class MockRMIConnection : public rmi::RMIConnectionInterface
@@ -208,6 +233,84 @@ TEST(FanucClientTest, TestSuccessfulLifecycle)
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
   EXPECT_FALSE(stream_connected);
+}
+
+// Regression test for a bug where FanucClient::streamMotionThread's queue bracket-tracking loop
+// could snap directly to a not-yet-due future waypoint in a single control cycle instead of
+// ramping smoothly toward it, whenever the command queue starved for longer than one control
+// period (e.g. after a scheduling/network hiccup upstream) and then received a new command. See
+// command_pos.csv field data: a ~144ms flat hold followed by a single-cycle ~17 degree jump.
+TEST(FanucClientTest, NoSnapAfterQueueStarvation)
+{
+  std::atomic<bool> stream_connected = false;
+  // Pace the mocked realtime loop to the control period (8ms, matching getControllerCapability's
+  // sampling_rate below) so the interpolator's virtual clock tracks wall-clock time closely enough
+  // to reproduce the same starvation timing seen in the field.
+  constexpr int kControlPeriodMs = 8;
+  auto stream_motion_interface = std::make_unique<NiceMockStreamMotionConnection>(stream_connected, kControlPeriodMs);
+  NiceMockStreamMotionConnection* mock_stream_motion = stream_motion_interface.get();
+  auto rmi_interface = std::make_unique<NiceMockRMIConnection>();
+  fanuc_client::FanucClient fanuc_client("127.0.0.1", 60015, 16001, std::move(stream_motion_interface),
+                                         std::move(rmi_interface));
+
+  fanuc_client.startRealtimeStream();
+  while (!stream_connected)
+  {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+
+  const Eigen::VectorXd steady_target = Eigen::VectorXd::Zero(stream_motion::kMaxAxisNumber);
+  for (int i = 0; i < 20; ++i)
+  {
+    fanuc_client.writeJointTarget(steady_target);
+    std::this_thread::sleep_for(std::chrono::milliseconds(kControlPeriodMs));
+  }
+
+  // Starve the command queue for well over one control period, matching the field-observed
+  // ~144ms gap that preceded the jump in command_pos.csv. The realtime thread keeps running
+  // during this gap (graceful hold at steady_target), it just receives no new commands.
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+
+  const Eigen::VectorXd distant_target = steady_target.array() + 1.0;
+  for (int i = 0; i < 40; ++i)
+  {
+    fanuc_client.writeJointTarget(distant_target);
+    std::this_thread::sleep_for(std::chrono::milliseconds(kControlPeriodMs));
+  }
+
+  fanuc_client.stopRealtimeStream();
+
+  const auto history = mock_stream_motion->commandHistory();
+  ASSERT_GT(history.size(), 2u);
+
+  constexpr double kNear = 1e-3;
+  size_t first_near_distant = history.size();
+  for (size_t i = 0; i < history.size(); ++i)
+  {
+    if (std::abs(history[i][0] - distant_target[0]) < kNear)
+    {
+      first_near_distant = i;
+      break;
+    }
+  }
+  ASSERT_LT(first_near_distant, history.size()) << "distant_target was never reached";
+
+  size_t last_near_steady = 0;
+  for (size_t i = 0; i < first_near_distant; ++i)
+  {
+    if (std::abs(history[i][0] - steady_target[0]) < kNear)
+    {
+      last_near_steady = i;
+    }
+  }
+
+  // Correct behavior ramps gradually across many cycles (~150ms starvation / 8ms period is
+  // roughly 19 cycles); the bug snaps from steady_target straight to distant_target in a single
+  // cycle right after the starvation gap ends. Require more than a handful of cycles in between
+  // to catch a single-cycle (or near single-cycle) snap while tolerating normal test timing jitter.
+  EXPECT_GT(first_near_distant - last_near_steady, 3u)
+      << "Position went from steady_target to distant_target in " << (first_near_distant - last_near_steady)
+      << " cycle(s) — expected a gradual multi-cycle ramp; this indicates an interpolation snap.";
 }
 
 TEST(FanucClientTest, TestGetLimits)

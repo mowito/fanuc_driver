@@ -8,6 +8,7 @@
 #include <Eigen/Core>
 #include <csignal>
 #include <cstdint>
+#include <fstream>
 #include <iostream>
 #include <mutex>
 #include <utility>
@@ -296,6 +297,15 @@ void FanucClient::streamMotionThread(const Eigen::VectorXd& joint_angles)
   double ts_drift = 0.0;
   double dev_time = 0.0;
   double dev_time_prev = 0.0;
+  double temp = 0.0;
+
+  std::ofstream command_pos_log("command_pos.csv", std::ios::out | std::ios::trunc);
+  command_pos_log << "timestamp";
+  for (int i = 0; i < stream_motion::kMaxAxisNumber; ++i)
+  {
+    command_pos_log << ",joint_" << i;
+  }
+  command_pos_log << "\n";
 
   while (is_streaming_)
   {
@@ -330,10 +340,14 @@ void FanucClient::streamMotionThread(const Eigen::VectorXd& joint_angles)
     while (p_queue_impl_->command_queue_.size_approx() != 0)
     {
       const PQueueImpl::StampedEigen* queue_entry = p_queue_impl_->command_queue_.peek();
-      last_command = command;
-      last_command_timestamp = command_timestamp;
-      command_timestamp = std::get<0>(*queue_entry).count();
-      command = std::get<1>(*queue_entry);
+      const double peeked_timestamp = std::get<0>(*queue_entry).count();
+      if (peeked_timestamp != command_timestamp)
+      {
+        last_command = command;
+        last_command_timestamp = command_timestamp;
+        command_timestamp = peeked_timestamp;
+        command = std::get<1>(*queue_entry);
+      }
       if (dev_time == 0.0)
       {
         dev_time = command_timestamp;
@@ -366,9 +380,19 @@ void FanucClient::streamMotionThread(const Eigen::VectorXd& joint_angles)
     // Handle IO commands.
     while (p_queue_impl_->command_io_queue_.try_dequeue(command_io)) {}
 
+    // Log command pos.
+    command_pos_log << dev_time_prev;
+    for (int i = 0; i < stream_motion::kMaxAxisNumber; ++i)
+    {
+      command_pos_log << "," << command_pos[i];
+    }
+    command_pos_log << "\n";
+
     stream_motion_->sendCommand(command_pos, !is_streaming_, command_io);
     p_queue_impl_->robot_state_queue_.enqueue(status);
   }
+
+  command_pos_log.close();
 }
 
 void FanucClient::fetchRobotLimits()
