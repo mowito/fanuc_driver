@@ -44,7 +44,7 @@ class PositionSmoothing(Node):
 
         self.input.max_velocity = [2.0, 2.0, 3.0, 3.0, 3.0, 3.0]  # (rad/s) Maximum joint velocities
         self.input.max_acceleration = [4.5, 4.5, 7.0, 7.0, 7.0, 7.0]  # (rad/s^2) Maximum joint accelerations
-        self.input.max_jerk = [20.0, 20.0, 28.0, 28.0, 28.0, 28.0]  # (rad/s^3) Maximum joint jerks
+        self.input.max_jerk = [20.0, 20.0, 30.0, 30.0, 30.0, 30.0]  # (rad/s^3) Maximum joint jerks
 
         self.pos_gain = 0.8  # Proportional gain for smoothing
         self.max_diff = 0.1  # (rad) Maximum allowed change in position per update
