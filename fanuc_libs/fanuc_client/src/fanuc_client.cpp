@@ -340,14 +340,10 @@ void FanucClient::streamMotionThread(const Eigen::VectorXd& joint_angles)
     while (p_queue_impl_->command_queue_.size_approx() != 0)
     {
       const PQueueImpl::StampedEigen* queue_entry = p_queue_impl_->command_queue_.peek();
-      const double peeked_timestamp = std::get<0>(*queue_entry).count();
-      if (peeked_timestamp != command_timestamp)
-      {
-        last_command = command;
-        last_command_timestamp = command_timestamp;
-        command_timestamp = peeked_timestamp;
-        command = std::get<1>(*queue_entry);
-      }
+      last_command = command;
+      last_command_timestamp = command_timestamp;
+      command_timestamp = std::get<0>(*queue_entry).count();
+      command = std::get<1>(*queue_entry);
       if (dev_time == 0.0)
       {
         dev_time = command_timestamp;
