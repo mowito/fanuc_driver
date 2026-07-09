@@ -37,8 +37,11 @@ publish_joint_accelerations: false
 
 ## Plugins for smoothing outgoing commands
 use_smoothing: true
-smoothing_filter_plugin_name: "online_signal_smoothing::ButterworthFilterPlugin"
-acceleration_filter_update_period: 0.008 # [seconds] Must match the publish_period parameter
+smoothing_filter_plugin_name: "online_signal_smoothing::RuckigFilterPlugin"
+
+# Parameters required by online_signal_smoothing::RuckigFilterPlugin
+update_period: 0.008  # [seconds] Must match the publish_period parameter
+planning_group_name: manipulator  # Must match move_group_name
 
 ## MoveIt properties
 move_group_name: manipulator  # Often 'manipulator' or 'arm'
@@ -48,7 +51,6 @@ planning_frame: base_link  # The MoveIt planning frame. Often 'base_link' or 'wo
 ee_frame_name: fanuc_flange  # The name of the end effector link, used to return the EE pose
 robot_link_command_frame:  fanuc_flange  # commands must be given in the frame of a robot link. Usually either the base or end effector
 
-acceleration_filter_planning_group_name: manipulator  # Often 'manipulator' or 'arm'
 is_primary_planning_scene_monitor: false  # The MoveGroup node maintains the planning scene, so Servo needs to get its world info from there.
 monitored_planning_scene_topic: /monitored_planning_scene
 
@@ -66,7 +68,7 @@ joint_command_in_topic: ~/delta_joint_cmds # Topic for incoming joint angle comm
 joint_topic: /joint_states
 status_topic: ~/status # Publish status to this topic
 command_out_type: std_msgs/Float64MultiArray
-command_out_topic: /forward_position_controller/commands_raw
+command_out_topic: /forward_position_controller/commands
 
 ## Collision checking for the entire robot body
 check_collisions: true  # Check collisions?
