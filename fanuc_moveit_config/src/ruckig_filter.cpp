@@ -102,7 +102,9 @@ bool RuckigFilterPlugin::doSmoothing(std::vector<double>& position_vector)
     ruckig_input_->target_velocity.at(i) =
         ruckig_input_->current_velocity.at(i) + ruckig_input_->current_acceleration.at(i) * params_.update_period;
   }
-  ruckig_input_->target_velocity = std::vector<double>(6, 0.0);
+  // the above target velocity computation caused overshooting in the fanuc arm's motion -> so keeping target velocity as zero resolved it (!WIP!)
+  // this is a workaround!
+  ruckig_input_->target_velocity = std::vector<double>(num_joints, 0.0);
   // target_acceleration remains a vector of zeroes
 
   // Call the Ruckig algorithm
