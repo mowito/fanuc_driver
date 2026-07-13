@@ -6,12 +6,14 @@
 #include "fanuc_client/fanuc_client.hpp"
 
 #include <Eigen/Core>
+#include <algorithm>
 #include <csignal>
 #include <cstdint>
 #include <fstream>
 #include <iostream>
 #include <mutex>
 #include <utility>
+#include <vector>
 
 #include "fanuc_client/gpio_buffer.hpp"
 #include "readerwriterqueue.h"
@@ -27,6 +29,10 @@ struct sigaction FanucClient::previous_sigaction_;
 namespace
 {
 constexpr double kFullPayload = 7.0;
+// Passed to FanucClient::getLimits() to fetch each axis's max no-payload velocity, used to bound
+// how fast streamMotionThread is allowed to move command_pos per cycle. Matches the v_max used
+// internally by getLimits() so the returned limit corresponds to full speed, not a throttled one.
+constexpr double kMaxSpeedForRateLimit = 2000.0;
 constexpr auto kStatusPacketFailureMessage = "Invalid robot status packet. Make sure the robot connected can be "
                                              "reached on the network and is in a running state.";
 constexpr auto kStatusStatusNotReadyMessage = "Stream motion control is not ready. Check if the robot has alarms "
@@ -298,14 +304,33 @@ void FanucClient::streamMotionThread(const Eigen::VectorXd& joint_angles)
   double dev_time = 0.0;
   double dev_time_prev = 0.0;
   double temp = 0.0;
+  bool log_commands = false;
+  std::ofstream command_pos_log;
 
-  std::ofstream command_pos_log("command_pos.csv", std::ios::out | std::ios::trunc);
-  command_pos_log << "timestamp";
-  for (int i = 0; i < stream_motion::kMaxAxisNumber; ++i)
+  // Max per-axis, no-payload velocity, used below to bound how far command_pos may move in a
+  // single control cycle. This prevents a large step (e.g. after the control loop stalls and the
+  // command queue runs dry) from being sent to the robot in one cycle: the catch-up is instead
+  // spread out over multiple cycles at a physically achievable rate.
+  std::vector<double> max_vel_no_load;
+  std::vector<double> unused_acc_limit;
+  std::vector<double> unused_jerk_limit;
+  getLimits(kMaxSpeedForRateLimit, 0.0, max_vel_no_load, unused_acc_limit, unused_jerk_limit);
+  std::vector<double> max_step_per_cycle(max_vel_no_load.size(), 0.0);
+  for (size_t i = 0; i < max_vel_no_load.size(); ++i)
   {
-    command_pos_log << ",joint_" << i;
+    max_step_per_cycle[i] = max_vel_no_load[i] * (getControlPeriod() / 1000.0);
   }
-  command_pos_log << "\n";
+  Eigen::VectorXd last_output = joint_angles;
+
+  if (log_commands){
+    command_pos_log.open("command_pos.csv", std::ios::out | std::ios::trunc);
+    command_pos_log << "timestamp";
+    for (int i = 0; i < stream_motion::kMaxAxisNumber; ++i)
+    {
+      command_pos_log << ",joint_" << i;
+    }
+    command_pos_log << "\n";
+  }
 
   while (is_streaming_)
   {
@@ -370,25 +395,31 @@ void FanucClient::streamMotionThread(const Eigen::VectorXd& joint_angles)
     alpha = std::max(alpha, 0.0);
     for (Eigen::Index i = 0; i < status.joint_angle.size(); ++i)
     {
-      command_pos[i] = alpha * command[i] + (1.0 - alpha) * last_command[i];
+      const double desired = alpha * command[i] + (1.0 - alpha) * last_command[i];
+      const double step = std::clamp(desired - last_output[i], -max_step_per_cycle[i], max_step_per_cycle[i]);
+      command_pos[i] = last_output[i] + step;
+      last_output[i] = command_pos[i];
     }
 
     // Handle IO commands.
     while (p_queue_impl_->command_io_queue_.try_dequeue(command_io)) {}
 
     // Log command pos.
-    command_pos_log << dev_time_prev;
-    for (int i = 0; i < stream_motion::kMaxAxisNumber; ++i)
-    {
-      command_pos_log << "," << command_pos[i];
+    if (log_commands){
+      command_pos_log << dev_time_prev;
+      for (int i = 0; i < stream_motion::kMaxAxisNumber; ++i)
+      {
+        command_pos_log << "," << command_pos[i];
+      }
+      command_pos_log << "\n";
     }
-    command_pos_log << "\n";
 
     stream_motion_->sendCommand(command_pos, !is_streaming_, command_io);
     p_queue_impl_->robot_state_queue_.enqueue(status);
   }
 
-  command_pos_log.close();
+  if (log_commands)
+    command_pos_log.close();
 }
 
 void FanucClient::fetchRobotLimits()
@@ -444,7 +475,7 @@ bool FanucClient::getLimits(const double v_peak, const double payload, std::vect
   Eigen::VectorXd jerk_limit_full_load =
       idx_frac * (jerk_limits_full_load_.col(idx_u) - jerk_limits_full_load_.col(idx_l)) +
       jerk_limits_full_load_.col(idx_l);
-  const double payload_pct = payload / kFullPayload;
+  const double payload_pct = std::clamp(payload / kFullPayload, 0.0, 1.0);
   vel_limit.resize(vel_limit_no_load.size(), 0.0);
   acc_limit.resize(acc_limit_full_load.size(), 0.0);
   jerk_limit.resize(jerk_limit_full_load.size(), 0.0);
