@@ -36,6 +36,9 @@
 #include <rclcpp/clock.hpp>
 #include <rclcpp/logging.hpp>
 
+#include <fstream>
+#include <iomanip>
+
 // Disable -Wold-style-cast because all _THROTTLE macros trigger this
 #pragma GCC diagnostic ignored "-Wold-style-cast"
 
@@ -46,6 +49,38 @@ namespace
 rclcpp::Logger getLogger()
 {
   return rclcpp::get_logger("moveit_ruckig_filter_plugin");
+}
+
+// DEBUG: logs the incoming (pre-smoothing) position_vector to a CSV for offline inspection
+void logCommandPosition(const std::vector<double>& position_vector)
+{
+  static std::ofstream csv_file;
+  static bool header_written = false;
+  static rclcpp::Clock clock(RCL_STEADY_TIME);
+
+  if (!csv_file.is_open())
+  {
+    csv_file.open("command_pos_1.csv", std::ios::out | std::ios::trunc);
+  }
+
+  if (!header_written)
+  {
+    csv_file << "timestamp";
+    for (size_t i = 0; i < position_vector.size(); ++i)
+    {
+      csv_file << ",joint_" << i;
+    }
+    csv_file << "\n";
+    header_written = true;
+  }
+
+  csv_file << std::fixed << std::setprecision(9) << clock.now().seconds();
+  for (const double pos : position_vector)
+  {
+    csv_file << "," << pos;
+  }
+  csv_file << "\n";
+  csv_file.flush();
 }
 }  // namespace
 
@@ -81,6 +116,8 @@ bool RuckigFilterPlugin::initialize(rclcpp::Node::SharedPtr node, moveit::core::
 
 bool RuckigFilterPlugin::doSmoothing(std::vector<double>& position_vector)
 {
+  logCommandPosition(position_vector);
+
   if (!ruckig_input_ || !ruckig_output_ || !ruckig_)
   {
     RCLCPP_ERROR_STREAM(getLogger(), "The Ruckig smoother was not initialized");

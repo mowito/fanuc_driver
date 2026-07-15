@@ -318,7 +318,8 @@ void FanucClient::streamMotionThread(const Eigen::VectorXd& joint_angles)
   std::vector<double> max_step_per_cycle(max_vel_no_load.size(), 0.0);
   for (size_t i = 0; i < max_vel_no_load.size(); ++i)
   {
-    max_step_per_cycle[i] = max_vel_no_load[i] * (getControlPeriod() / 1000.0);
+    // for safety taking 50% of max steps possible with the zero payload
+    max_step_per_cycle[i] = (max_vel_no_load[i] * (getControlPeriod() / 1000.0)) * 0.5;
   }
   Eigen::VectorXd last_output = joint_angles;
 
