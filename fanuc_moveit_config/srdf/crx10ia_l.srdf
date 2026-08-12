@@ -53,4 +53,5 @@ SPDX-License-Identifier: Apache-2.0
   <disable_collisions link1="J5_link" link2="end_effector" reason="Adjacent"/>
   <disable_collisions link1="J6_link" link2="end_effector" reason="Adjacent"/>
   <disable_collisions link1="flange" link2="end_effector" reason="Adjacent"/>
+  <disable_collisions link1="J6_link" link2="tool_link" reason="Adjacent"/>
 </robot>

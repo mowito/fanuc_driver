@@ -313,6 +313,70 @@ TEST(FanucClientTest, NoSnapAfterQueueStarvation)
       << " cycle(s) — expected a gradual multi-cycle ramp; this indicates an interpolation snap.";
 }
 
+// Regression test for the companion bug to NoSnapAfterQueueStarvation above: the velocity clamp
+// alone permits the per-cycle step to reach the velocity ceiling within a couple of cycles after a
+// queue-starvation gap, which is still a multi-cycle ramp (passing the ">3 cycles" check above) but
+// is a very high acceleration/jerk in practice. streamMotionThread additionally bounds how much the
+// per-cycle step may change cycle-to-cycle using the robot's acceleration limit, so the ramp should
+// take roughly (velocity limit) / (acceleration limit * control period) cycles, not 1-2.
+TEST(FanucClientTest, NoLargeAccelerationAfterQueueStarvation)
+{
+  std::atomic<bool> stream_connected = false;
+  constexpr int kControlPeriodMs = 8;
+  auto stream_motion_interface = std::make_unique<NiceMockStreamMotionConnection>(stream_connected, kControlPeriodMs);
+  NiceMockStreamMotionConnection* mock_stream_motion = stream_motion_interface.get();
+  auto rmi_interface = std::make_unique<NiceMockRMIConnection>();
+  fanuc_client::FanucClient fanuc_client("127.0.0.1", 60015, 16001, std::move(stream_motion_interface),
+                                         std::move(rmi_interface));
+
+  fanuc_client.startRealtimeStream();
+  while (!stream_connected)
+  {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+
+  const Eigen::VectorXd steady_target = Eigen::VectorXd::Zero(stream_motion::kMaxAxisNumber);
+  for (int i = 0; i < 20; ++i)
+  {
+    fanuc_client.writeJointTarget(steady_target);
+    std::this_thread::sleep_for(std::chrono::milliseconds(kControlPeriodMs));
+  }
+
+  // Starve the queue, matching NoSnapAfterQueueStarvation, so last_step decays to ~0 before resuming.
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+
+  const Eigen::VectorXd distant_target = steady_target.array() + 1.0;
+  for (int i = 0; i < 40; ++i)
+  {
+    fanuc_client.writeJointTarget(distant_target);
+    std::this_thread::sleep_for(std::chrono::milliseconds(kControlPeriodMs));
+  }
+
+  fanuc_client.stopRealtimeStream();
+
+  const auto history = mock_stream_motion->commandHistory();
+  ASSERT_GT(history.size(), 2u);
+
+  // Matches the mock's getRobotLimits (acc = 2000.0f no-payload) and streamMotionThread's 0.5 safety
+  // factor: max_step_delta_per_cycle = acc_limit * period_s^2 * 0.5.
+  constexpr double kAccLimit = 2000.0;
+  const double period_s = kControlPeriodMs / 1000.0;
+  const double kMaxStepDeltaPerCycle = kAccLimit * period_s * period_s * 0.5;
+  // Tolerate normal test/thread scheduling jitter (a cycle running a bit long or short) on top of
+  // the theoretical bound.
+  constexpr double kTolerance = 1e-2;
+
+  for (size_t i = 2; i < history.size(); ++i)
+  {
+    const double step_prev = history[i - 1][0] - history[i - 2][0];
+    const double step_curr = history[i][0] - history[i - 1][0];
+    const double step_delta = std::abs(step_curr - step_prev);
+    EXPECT_LE(step_delta, kMaxStepDeltaPerCycle + kTolerance)
+        << "Cycle " << i << ": step changed by " << step_delta << " deg, exceeding the acceleration bound of "
+        << kMaxStepDeltaPerCycle << " deg/cycle — indicates a missing/broken acceleration clamp.";
+  }
+}
+
 TEST(FanucClientTest, TestGetLimits)
 {
   std::atomic<bool> stream_connected = false;

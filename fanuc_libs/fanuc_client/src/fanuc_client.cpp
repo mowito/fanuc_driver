@@ -304,7 +304,7 @@ void FanucClient::streamMotionThread(const Eigen::VectorXd& joint_angles)
   double dev_time = 0.0;
   double dev_time_prev = 0.0;
   double temp = 0.0;
-  bool log_commands = false;
+  bool log_commands = true;
   std::ofstream command_pos_log;
 
   // Max per-axis, no-payload velocity, used below to bound how far command_pos may move in a
@@ -312,16 +312,25 @@ void FanucClient::streamMotionThread(const Eigen::VectorXd& joint_angles)
   // command queue runs dry) from being sent to the robot in one cycle: the catch-up is instead
   // spread out over multiple cycles at a physically achievable rate.
   std::vector<double> max_vel_no_load;
-  std::vector<double> unused_acc_limit;
-  std::vector<double> unused_jerk_limit;
-  getLimits(kMaxSpeedForRateLimit, 0.0, max_vel_no_load, unused_acc_limit, unused_jerk_limit);
+  std::vector<double> acc_limit_no_load;
+  std::vector<double> jerk_limit_no_load;  // reserved for future jerk limiting; not applied yet
+  getLimits(kMaxSpeedForRateLimit, 0.0, max_vel_no_load, acc_limit_no_load, jerk_limit_no_load);
   std::vector<double> max_step_per_cycle(max_vel_no_load.size(), 0.0);
+  std::vector<double> max_step_delta_per_cycle(acc_limit_no_load.size(), 0.0);
+  const double period_s = getControlPeriod() / 1000.0;
   for (size_t i = 0; i < max_vel_no_load.size(); ++i)
   {
     // for safety taking 50% of max steps possible with the zero payload
-    max_step_per_cycle[i] = (max_vel_no_load[i] * (getControlPeriod() / 1000.0)) * 0.5;
+    max_step_per_cycle[i] = (max_vel_no_load[i] * period_s);
+    // for safety taking 50% of max acceleration possible with the zero payload; bounds how much
+    // the per-cycle step may change cycle-to-cycle (step ~= velocity * period, so a change in step
+    // of acc_limit * period^2 corresponds to a velocity change of acc_limit * period). This keeps a
+    // command-queue starvation followed by a resumed command from snapping to the velocity ceiling
+    // in a handful of cycles. - using 100% of max now
+    max_step_delta_per_cycle[i] = acc_limit_no_load[i] * period_s * period_s;
   }
   Eigen::VectorXd last_output = joint_angles;
+  Eigen::VectorXd last_step = Eigen::VectorXd::Zero(joint_angles.size());
 
   if (log_commands){
     command_pos_log.open("command_pos.csv", std::ios::out | std::ios::trunc);
@@ -330,6 +339,7 @@ void FanucClient::streamMotionThread(const Eigen::VectorXd& joint_angles)
     {
       command_pos_log << ",joint_" << i;
     }
+    command_pos_log << ",buffer_size";
     command_pos_log << "\n";
   }
 
@@ -397,9 +407,12 @@ void FanucClient::streamMotionThread(const Eigen::VectorXd& joint_angles)
     for (Eigen::Index i = 0; i < status.joint_angle.size(); ++i)
     {
       const double desired = alpha * command[i] + (1.0 - alpha) * last_command[i];
-      const double step = std::clamp(desired - last_output[i], -max_step_per_cycle[i], max_step_per_cycle[i]);
+      const double desired_step = std::clamp(desired - last_output[i], -max_step_per_cycle[i], max_step_per_cycle[i]);
+      const double step = std::clamp(desired_step, last_step[i] - max_step_delta_per_cycle[i],
+                                      last_step[i] + max_step_delta_per_cycle[i]);
       command_pos[i] = last_output[i] + step;
       last_output[i] = command_pos[i];
+      last_step[i] = step;
     }
 
     // Handle IO commands.
@@ -412,6 +425,7 @@ void FanucClient::streamMotionThread(const Eigen::VectorXd& joint_angles)
       {
         command_pos_log << "," << command_pos[i];
       }
+      command_pos_log << "," << size_before;
       command_pos_log << "\n";
     }
 
