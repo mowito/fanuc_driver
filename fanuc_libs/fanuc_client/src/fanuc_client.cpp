@@ -9,7 +9,6 @@
 #include <algorithm>
 #include <csignal>
 #include <cstdint>
-#include <fstream>
 #include <iostream>
 #include <mutex>
 #include <utility>
@@ -109,6 +108,15 @@ FanucClient::FanucClient(std::string robot_ip, const uint16_t stream_motion_port
   control_period_ = controller_capability.sampling_rate;
   client_version_ = controller_capability.available_version;
   fetchRobotLimits();
+
+  // incoming commands logger
+  in_command_pos_log.open("incoming_command_pos.csv", std::ios::out | std::ios::trunc);
+  in_command_pos_log << "timestamp";
+  for (int i = 0; i < stream_motion::kMaxAxisNumber; ++i)
+  {
+    in_command_pos_log << ",joint_" << i;
+  }
+  in_command_pos_log << "\n";
 
   setupSignalHandler();
 }
@@ -229,6 +237,13 @@ void FanucClient::writeJointTarget(const Eigen::VectorXd& joint_targets)
   }
   auto cur_time_from_start = std::chrono::high_resolution_clock::now() - start_time_;
   p_queue_impl_->command_queue_.enqueue({ cur_time_from_start, last_joint_angles_cmd_ });
+
+  in_command_pos_log << cur_time_from_start.count();
+  for (int i = 0; i < stream_motion::kMaxAxisNumber; ++i)
+  {
+    in_command_pos_log << "," << joint_targets[i];
+  }
+  in_command_pos_log << "\n";
 }
 
 void FanucClient::writeJointTargetRMI(const Eigen::VectorXd& joint_targets)

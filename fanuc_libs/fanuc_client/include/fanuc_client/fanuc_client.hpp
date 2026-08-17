@@ -10,6 +10,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <fstream>
 
 #include <Eigen/Core>
 
@@ -205,6 +206,9 @@ private:
 
   // Force sensor default type
   uint32_t force_sensor_type_;
+
+  // incoming cmd log var
+  std::ofstream in_command_pos_log;
 
   struct PQueueImpl;
   std::unique_ptr<PQueueImpl> p_queue_impl_;
