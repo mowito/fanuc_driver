@@ -136,14 +136,14 @@ def launch_setup(context, *args, **kwargs):
             shell=True,
             output="screen",
         ),
-        ExecuteProcess(
-            cmd=[
-                "ros2 run controller_manager spawner --inactive "
-                "--controller-manager-timeout 180 admittance_controller"
-            ],
-            shell=True,
-            output="screen",
-        ),
+        # ExecuteProcess(
+        #     cmd=[
+        #         "ros2 run controller_manager spawner --inactive "
+        #         "--controller-manager-timeout 180 admittance_controller"
+        #     ],
+        #     shell=True,
+        #     output="screen",
+        # ),
         ExecuteProcess(
             cmd=[
                 "ros2 run controller_manager spawner "
