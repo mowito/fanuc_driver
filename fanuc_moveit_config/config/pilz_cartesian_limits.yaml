@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: 2025, FANUC America Corporation
+# SPDX-FileCopyrightText: 2025, FANUC CORPORATION
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Cartesian limits for the Pilz industrial motion planner (LIN/CIRC/PTP).
+# Tune these to the payload/process requirements of your application.
+cartesian_limits:
+  max_trans_vel: 0.5
+  max_trans_acc: 1.25
+  max_trans_dec: -3.0
+  max_rot_vel: 1.57
