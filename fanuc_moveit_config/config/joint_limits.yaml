@@ -36,8 +36,8 @@ joint_limits:
     has_jerk_limits: true
     max_jerk: 34.193251521
   J4:
-    # min_position: -1.75
-    # max_position: 1.75
+    min_position: -1.75
+    max_position: 1.75
     has_velocity_limits: true
     max_velocity: 3.1415926535897931
     has_acceleration_limits: true
