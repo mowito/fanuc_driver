@@ -5,7 +5,7 @@
   <xacro:arg name="rmi_port" default="16001"/>
   <xacro:arg name="stream_motion_port" default="60015"/>
   <xacro:arg name="gpio_configuration" default=""/>
-  <xacro:arg name="payload_schedule" default="4"/>
+  <xacro:arg name="payload_schedule" default="2"/>
   <xacro:arg name="out_cmd_interp_buff_target" default="8"/>
   <xacro:arg name="force_sensor_type" default="1"/>
   <xacro:arg name="use_mock" default="false"/>
@@ -23,6 +23,16 @@
   <xacro:crx10ia_l parent="world" child="end_effector">
     <origin xyz="0 0 0" rpy="0 0 0"/>
   </xacro:crx10ia_l>
+
+  <!-- tool0: the UR-style tool frame the mw_fuse_insertion_sm servo stack uses (servo snapshot,
+       recorded pose moves, MPC, hand-eye). Same pose as fanuc_flange, whose z already points out
+       of the flange like a UR tool0. -->
+  <link name="tool0"/>
+  <joint name="fanuc_flange-tool0" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <parent link="fanuc_flange"/>
+    <child link="tool0"/>
+  </joint>
 
   <xacro:crx_control name="crx10ia_l"/>
 </robot>
